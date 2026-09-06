@@ -73,3 +73,4 @@ iOSInjectionProject/
 
 # Mac OS X
 .DS_Store
+*.dmg
