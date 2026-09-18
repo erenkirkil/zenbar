@@ -58,12 +58,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 "com.erenkirkil.tiler",
                 "com.erenkirkil.closetoquit",
                 "com.google.antigravity",
-                "com.erenkirkil.docktoggle"
+                "com.erenkirkil.docktoggle",
+                "com.erenkirkil.sclip"
             ]
         ])
-        if let saved = UserDefaults.standard.stringArray(forKey: hiddenBundlesKey) {
-            cachedHiddenBundleIDs = Set(saved)
-        }
+        var currentSet = Set(UserDefaults.standard.stringArray(forKey: hiddenBundlesKey) ?? [])
+        currentSet.insert("com.erenkirkil.sclip")
+        cachedHiddenBundleIDs = currentSet
+        UserDefaults.standard.set(Array(currentSet), forKey: hiddenBundlesKey)
+        UserDefaults.standard.synchronize()
+
+        let checkOpt = ["AXTrustedCheckOptionPrompt" as CFString: true] as CFDictionary
+        let isTrusted = AXIsProcessTrustedWithOptions(checkOpt)
+        zenbar_logMessage("[ZenBarApp] Accessibility trusted: \(isTrusted)")
 
         // Clear any stale invisible autosave state from UserDefaults
         UserDefaults.standard.removeObject(forKey: "NSStatusItem Visible ZenBarToggle")
@@ -149,21 +156,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// macOS 27 AX yapısında MenuBarAgent altındaki gerçek uygulama PID'sini (AXApplication düğümü) bulur
-    private func findOwnerPID(in element: AXUIElement) -> pid_t? {
-        var roleVal: AnyObject?
-        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleVal) == .success,
-           let role = roleVal as? String, role == "AXApplication" {
-            var pid: pid_t = 0
-            if AXUIElementGetPid(element, &pid) == .success && pid != 0 {
-                return pid
-            }
+    /// macOS 27 AX yapısında MenuBarAgent altındaki gerçek uygulama PID'sini bulur
+    private func findOwnerPID(in element: AXUIElement, agentPID: pid_t) -> pid_t? {
+        var pid: pid_t = 0
+        if AXUIElementGetPid(element, &pid) == .success && pid != 0 && pid != agentPID {
+            return pid
         }
         var childrenVal: AnyObject?
         if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenVal) == .success,
            let children = childrenVal as? [AXUIElement] {
             for child in children {
-                if let found = findOwnerPID(in: child) {
+                if let found = findOwnerPID(in: child, agentPID: agentPID) {
                     return found
                 }
             }
@@ -213,11 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             var pt = CGPoint.zero
             guard AXValueGetValue(posVal as! AXValue, .cgPoint, &pt) else { continue }
 
-            let ownerPID = findOwnerPID(in: g) ?? {
-                var directPID: pid_t = 0
-                AXUIElementGetPid(g, &directPID)
-                return directPID
-            }()
+            let ownerPID = findOwnerPID(in: g, agentPID: agent.processIdentifier) ?? 0
 
             if ownerPID == myPID {
                 zenBarPositions.append(pt.x)
@@ -229,7 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if desc.contains("Separator") || desc.contains("Ayırıcı") {
                     detectedSepX = pt.x
                 }
-            } else if ownerPID != agent.processIdentifier,
+            } else if ownerPID != 0,
                       let app = NSRunningApplication(processIdentifier: ownerPID),
                       let bundleID = app.bundleIdentifier,
                       !bundleID.hasPrefix("com.apple.") {
@@ -237,20 +236,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        let toggleX: CGFloat = {
+            if let w = statusItemToggle.button?.window?.frame.origin.x, w > 0 { return w }
+            if !zenBarPositions.isEmpty { return zenBarPositions.max()! }
+            return 999999
+        }()
+
+        let minAppX = otherApps.map(\.x).min() ?? 0
         let sepX: CGFloat
-        if let found = detectedSepX {
+        if let found = detectedSepX, found > minAppX, found < toggleX {
             sepX = found
             lastSeparatorX = found
-        } else if let toggleX = statusItemToggle.button?.window?.frame.origin.x, toggleX > 0 {
+        } else {
             sepX = toggleX
             lastSeparatorX = toggleX
-        } else if !zenBarPositions.isEmpty {
-            sepX = zenBarPositions.min()!
-            lastSeparatorX = sepX
-        } else if let last = lastSeparatorX {
-            sepX = last
-        } else {
-            return hiddenBundleIDs
         }
 
         var leftBundles: Set<String> = []
@@ -259,7 +258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 leftBundles.insert(app.bundleID)
             }
         }
-        zenbar_logMessage("[ZenBarApp] detectLeftHandBundleIDs found \(leftBundles.count) left-hand bundles (sepX=\(sepX)): \(Array(leftBundles))")
+        zenbar_logMessage("[ZenBarApp] detectLeftHandBundleIDs found \(leftBundles.count) left-hand bundles (sepX=\(sepX), toggleX=\(toggleX)): \(Array(leftBundles))")
         return leftBundles.isEmpty ? hiddenBundleIDs : leftBundles
     }
 
@@ -335,6 +334,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if isEditMode {
             isEditMode = false
+            let newLeft = detectLeftHandBundleIDs()
+            if !newLeft.isEmpty {
+                hiddenBundleIDs = newLeft
+            }
             updateIcons()
             return
         }
@@ -379,13 +382,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     leafImg.isTemplate = true
                     statusItemToggle.button?.image = leafImg
                 }
+                // Genişletildiğinde menü çubuğundaki tüm uygulamaların konumlarını tara
+                let detected = detectLeftHandBundleIDs()
+                if !detected.isEmpty {
+                    hiddenBundleIDs = hiddenBundleIDs.union(detected)
+                }
             } else {
                 var toHide = hiddenBundleIDs
-                if toHide.isEmpty {
-                    toHide = detectLeftHandBundleIDs()
-                    if !toHide.isEmpty {
-                        hiddenBundleIDs = toHide
-                    }
+                let detected = detectLeftHandBundleIDs()
+                if !detected.isEmpty {
+                    toHide = toHide.union(detected)
+                    hiddenBundleIDs = toHide
                 }
                 zenbar_logMessage("[ZenBarApp] updateIcons toHide: \(Array(toHide))")
                 if let leafFillImg = NSImage(systemSymbolName: "leaf.fill", accessibilityDescription: "ZenBarToggle") {
