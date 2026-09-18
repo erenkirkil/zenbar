@@ -37,3 +37,22 @@ echo "📎 Onay bileti DMG dosyasına zımbalanıyor (Stapling)..."
 xcrun stapler staple "$DMG_NAME"
 
 echo "✅ Tebrikler! $DMG_NAME dosyası başarıyla imzalandı, onaylandı ve dağıtıma hazır hale getirildi."
+
+TAG="v1.1.0"
+
+if [[ "$1" != "--no-upload" ]]; then
+    echo "🚀 GitHub Release oluşturuluyor ve $DMG_NAME yükleniyor ($TAG)..."
+    if gh release view "$TAG" >/dev/null 2>&1; then
+        gh release upload "$TAG" "$DMG_NAME" --clobber
+    else
+        gh release create "$TAG" "$DMG_NAME" \
+            --title "ZenBar $TAG" \
+            --notes "### ✨ macOS 27 Native Menu Bar Support & Swift 6
+
+- **MenuBarClientCore Entegrasyonu:** macOS 27 için yerel private framework mimarisi ile sıfır yapay pencere/çizgi kalıntısıyla natif gizleme.
+- **Swift 6 & Concurrency Güvenliği:** Arka plan tamamlama kuyrukları MainActor ile tam uyumlu hale getirildi.
+- **AppKit SF Symbol Uyumluluğu:** Dinamik açık/koyu menü çubuğu temasıyla tam uyumlu template ikonlar.
+- **Akıllı Algılama:** MenuBarAgent altındaki uygulamaları otomatik algılama ve sağ tık menüsü ile yönetebilme."
+    fi
+    echo "🎉 GitHub Release ($TAG) başarıyla yayınlandı!"
+fi
