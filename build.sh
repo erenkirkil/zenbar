@@ -38,7 +38,7 @@ xcrun stapler staple "$DMG_NAME"
 
 echo "✅ Tebrikler! $DMG_NAME dosyası başarıyla imzalandı, onaylandı ve dağıtıma hazır hale getirildi."
 
-TAG="v1.1.2"
+TAG="v1.1.0"
 
 if [[ "$1" != "--no-upload" ]]; then
     echo "🚀 GitHub Release oluşturuluyor ve $DMG_NAME yükleniyor ($TAG)..."
