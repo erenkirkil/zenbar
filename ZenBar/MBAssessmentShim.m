@@ -132,8 +132,8 @@ id zenbar_makeConfiguration(NSArray<NSNumber *> *allowedSystemItems,
             }
         }
 
-        zenbar_log(@"makeConfiguration with %lu system items, %lu clean bundles",
-                   (unsigned long)allowedSystemItems.count, (unsigned long)cleanBundles.count);
+        zenbar_log(@"makeConfiguration with %lu system items (%@), %lu clean bundles",
+                   (unsigned long)allowedSystemItems.count, allowedSystemItems, (unsigned long)cleanBundles.count);
 
         id alloced = [_configClass alloc];
         id (*initMsg)(id, SEL, NSArray *, NSArray *) = (void *)objc_msgSend;

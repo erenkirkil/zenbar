@@ -38,7 +38,7 @@ xcrun stapler staple "$DMG_NAME"
 
 echo "✅ Tebrikler! $DMG_NAME dosyası başarıyla imzalandı, onaylandı ve dağıtıma hazır hale getirildi."
 
-TAG="v1.1.1"
+TAG="v1.1.2"
 
 if [[ "$1" != "--no-upload" ]]; then
     echo "🚀 GitHub Release oluşturuluyor ve $DMG_NAME yükleniyor ($TAG)..."
@@ -47,12 +47,12 @@ if [[ "$1" != "--no-upload" ]]; then
     else
         gh release create "$TAG" "$DMG_NAME" \
             --title "ZenBar $TAG" \
-            --notes "### ✨ macOS 27 Native Menu Bar Support & Swift 6
+            --notes "### ✨ macOS 27 Sistem İkonları Desteği & İyileştirmeler
 
-- **MenuBarClientCore Entegrasyonu:** macOS 27 için yerel private framework mimarisi ile sıfır yapay pencere/çizgi kalıntısıyla natif gizleme.
-- **Swift 6 & Concurrency Güvenliği:** Arka plan tamamlama kuyrukları MainActor ile tam uyumlu hale getirildi.
-- **AppKit SF Symbol Uyumluluğu:** Dinamik açık/koyu menü çubuğu temasıyla tam uyumlu template ikonlar.
-- **Akıllı Algılama:** MenuBarAgent altındaki uygulamaları otomatik algılama ve sağ tık menüsü ile yönetebilme."
+- **Natif Sistem İkonu Gizleme:** Pil, Wi-Fi, Bluetooth, Ses, Ekran, Ekran Yansıtma gibi sistem kontrolleri macOS 27 assessment modu üzerinden natif olarak gizlenebiliyor.
+- **Kanonik MBSystemItem Eşleştirmesi:** macOS 27 \`MenuBarClientCore\` enum değerleri tersine mühendislikle kanonik olarak eşleştirildi (Saat ve Denetim Merkezi korunurken, Ekran Yansıtma ve diğer kontroller başarıyla gizleniyor).
+- **Sistem İkonları Yönetim Menüsü:** Sağ tık menüsüne eklenen \"Sistem İkonları\" alt menüsü üzerinden tüm sistem kontrolleri ve Saat dilediğiniz gibi tek tek veya topluca yönetilebilir.
+- **Sclip ve Üçüncü Taraf Uygulamalar:** \`sclip\` ve diğer arka plan menü çubuğu ajanlarının otomatik gizlenmesi kararlı hale getirildi."
     fi
     echo "🎉 GitHub Release ($TAG) başarıyla yayınlandı!"
 fi

@@ -2,6 +2,46 @@ import AppKit
 import ApplicationServices
 import ServiceManagement
 
+enum MBSystemItem: Int, CaseIterable {
+    case battery = 0
+    case bluetooth = 1
+    case clock = 2
+    case displays = 3
+    case keyboard = 4
+    case volume = 5
+    case wifi = 6
+    case screenMirroring = 7
+    case primaryBentoBox = 8
+
+    var displayName: String {
+        switch self {
+        case .battery: return "Pil (Battery)"
+        case .bluetooth: return "Bluetooth"
+        case .clock: return "Saat (Clock)"
+        case .displays: return "Ekran (Displays)"
+        case .keyboard: return "Klavye (Keyboard)"
+        case .volume: return "Ses (Volume)"
+        case .wifi: return "Wi-Fi"
+        case .screenMirroring: return "Ekran Yansıtma (Screen Mirroring)"
+        case .primaryBentoBox: return "Denetim Merkezi (Control Center)"
+        }
+    }
+
+    static var allItemIDs: [Int] {
+        return allCases.map(\.rawValue)
+    }
+
+    /// Menüde kullanıcının gizlemeyi seçebileceği kontroller (Saat dahil!)
+    static var hideableCases: [MBSystemItem] {
+        return [.battery, .bluetooth, .displays, .screenMirroring, .volume, .wifi, .keyboard, .clock]
+    }
+
+    /// Varsayılan olarak gizlenecek kontroller (Saat (2) ve Denetim Merkezi (8) hariç)
+    static var defaultHiddenCases: [MBSystemItem] {
+        return [.battery, .bluetooth, .displays, .screenMirroring, .volume, .wifi, .keyboard]
+    }
+}
+
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -36,6 +76,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private let hideSystemIconsKey = "ZenBarHideSystemIcons"
+    private let hiddenSystemItemsKey = "ZenBarHiddenSystemItems_v2"
+
+    var hideSystemIcons: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: hideSystemIconsKey) == nil {
+                return true // Varsayılan: Sistem ikonlarını da gizle
+            }
+            return UserDefaults.standard.bool(forKey: hideSystemIconsKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: hideSystemIconsKey)
+            UserDefaults.standard.synchronize()
+        }
+    }
+
+    var hiddenSystemItems: Set<Int> {
+        get {
+            if let saved = UserDefaults.standard.array(forKey: hiddenSystemItemsKey) as? [Int] {
+                return Set(saved)
+            }
+            return Set(MBSystemItem.defaultHiddenCases.map(\.rawValue))
+        }
+        set {
+            UserDefaults.standard.set(Array(newValue), forKey: hiddenSystemItemsKey)
+            UserDefaults.standard.synchronize()
+        }
+    }
+
+    var currentAllowedSystemItems: [Int] {
+        if !hideSystemIcons {
+            return MBSystemItem.allItemIDs
+        }
+        let hidden = hiddenSystemItems
+        return MBSystemItem.allItemIDs.filter { !hidden.contains($0) }
+    }
+
     static var shared: AppDelegate!
 
     static func main() {
@@ -60,7 +137,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 "com.google.antigravity",
                 "com.erenkirkil.docktoggle",
                 "com.erenkirkil.sclip"
-            ]
+            ],
+            hideSystemIconsKey: true,
+            hiddenSystemItemsKey: MBSystemItem.defaultHiddenCases.map(\.rawValue)
         ])
         var currentSet = Set(UserDefaults.standard.stringArray(forKey: hiddenBundlesKey) ?? [])
         currentSet.insert("com.erenkirkil.sclip")
@@ -174,6 +253,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return nil
     }
 
+    private func systemItemFrom(description: String) -> MBSystemItem? {
+        let lower = description.lowercased()
+        if lower.contains("battery") || lower.contains("pil") || lower.contains("power") {
+            return .battery
+        }
+        if lower.contains("bluetooth") {
+            return .bluetooth
+        }
+        if lower.contains("clock") || lower.contains("saat") || lower.contains("time") {
+            return .clock
+        }
+        if (lower.contains("display") || lower.contains("ekran")) && !lower.contains("yansıtma") && !lower.contains("mirroring") {
+            return .displays
+        }
+        if lower.contains("keyboard") || lower.contains("klavye") || lower.contains("input source") {
+            return .keyboard
+        }
+        if lower.contains("sound") || lower.contains("volume") || lower.contains("ses") {
+            return .volume
+        }
+        if lower.contains("wi-fi") || lower.contains("wifi") || lower.contains("airport") {
+            return .wifi
+        }
+        if lower.contains("mirroring") || lower.contains("yansıtma") || lower.contains("airplay") || lower.contains("screen mirroring") {
+            return .screenMirroring
+        }
+        if lower.contains("bento") || lower.contains("control center") || lower.contains("denetim merkezi") {
+            return .primaryBentoBox
+        }
+        return nil
+    }
+
     func detectLeftHandBundleIDs() -> Set<String> {
         guard AXIsProcessTrusted() else {
             zenbar_logMessage("[ZenBarApp] Accessibility not trusted yet, returning existing hiddenBundleIDs")
@@ -206,6 +317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let myPID = ProcessInfo.processInfo.processIdentifier
         var zenBarPositions: [CGFloat] = []
         var otherApps: [(bundleID: String, x: CGFloat)] = []
+        var detectedSystemItems: [(item: MBSystemItem, x: CGFloat)] = []
 
         for g in groups {
             var posVal: AnyObject?
@@ -233,6 +345,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                       let bundleID = app.bundleIdentifier,
                       !bundleID.hasPrefix("com.apple.") {
                 otherApps.append((bundleID: bundleID, x: pt.x))
+            } else {
+                var descVal: AnyObject?
+                AXUIElementCopyAttributeValue(g, kAXDescriptionAttribute as CFString, &descVal)
+                var titleVal: AnyObject?
+                AXUIElementCopyAttributeValue(g, kAXTitleAttribute as CFString, &titleVal)
+                let desc = (descVal as? String) ?? (titleVal as? String) ?? ""
+                if let sysItem = systemItemFrom(description: desc) {
+                    detectedSystemItems.append((item: sysItem, x: pt.x))
+                }
             }
         }
 
@@ -258,6 +379,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 leftBundles.insert(app.bundleID)
             }
         }
+
+        if !detectedSystemItems.isEmpty {
+            var newHiddenSys: Set<Int> = []
+            for sys in detectedSystemItems {
+                // Saat (clock) ve Denetim Merkezi (primaryBentoBox) varsayılan olarak korunur
+                if sys.x < sepX && sys.item != .clock && sys.item != .primaryBentoBox {
+                    newHiddenSys.insert(sys.item.rawValue)
+                }
+            }
+            if !newHiddenSys.isEmpty {
+                hiddenSystemItems = newHiddenSys
+            }
+            zenbar_logMessage("[ZenBarApp] detectLeftHandBundleIDs detected \(detectedSystemItems.count) sys items, hidden: \(Array(newHiddenSys))")
+        }
+
         zenbar_logMessage("[ZenBarApp] detectLeftHandBundleIDs found \(leftBundles.count) left-hand bundles (sepX=\(sepX), toggleX=\(toggleX)): \(Array(leftBundles))")
         return leftBundles.isEmpty ? hiddenBundleIDs : leftBundles
     }
@@ -271,6 +407,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             current.insert(bundleID)
         }
         hiddenBundleIDs = current
+        if !isExpanded {
+            updateIcons()
+        }
+    }
+
+    @objc func toggleHideSystemIcons() {
+        hideSystemIcons.toggle()
+        if !isExpanded {
+            updateIcons()
+        }
+    }
+
+    @objc func toggleSystemItemHiding(_ sender: NSMenuItem) {
+        guard let rawID = sender.representedObject as? Int else { return }
+        var current = hiddenSystemItems
+        if current.contains(rawID) {
+            current.remove(rawID)
+        } else {
+            current.insert(rawID)
+        }
+        hiddenSystemItems = current
         if !isExpanded {
             updateIcons()
         }
@@ -307,6 +464,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let appsParentItem = NSMenuItem(title: "Gizlenecek Uygulamalar", action: nil, keyEquivalent: "")
             appsParentItem.submenu = appsMenu
             menu.addItem(appsParentItem)
+
+            // Sistem ikonları alt menüsü
+            let sysMenu = NSMenu()
+            let masterSysItem = NSMenuItem(title: "Sistem İkonlarını Gizle", action: #selector(toggleHideSystemIcons), keyEquivalent: "")
+            masterSysItem.target = self
+            masterSysItem.state = hideSystemIcons ? .on : .off
+            sysMenu.addItem(masterSysItem)
+            sysMenu.addItem(NSMenuItem.separator())
+
+            let currentHiddenSys = hiddenSystemItems
+            for item in MBSystemItem.hideableCases {
+                let sysItem = NSMenuItem(title: item.displayName, action: #selector(toggleSystemItemHiding(_:)), keyEquivalent: "")
+                sysItem.target = self
+                sysItem.representedObject = item.rawValue
+                sysItem.state = currentHiddenSys.contains(item.rawValue) ? .on : .off
+                sysMenu.addItem(sysItem)
+            }
+
+            let sysParentItem = NSMenuItem(title: "Sistem İkonları", action: nil, keyEquivalent: "")
+            sysParentItem.submenu = sysMenu
+            menu.addItem(sysParentItem)
 
             menu.addItem(NSMenuItem.separator())
 
@@ -400,8 +578,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     statusItemToggle.button?.image = leafFillImg
                 }
                 if assessmentManager.isSupported {
-                    if !toHide.isEmpty {
-                        assessmentManager.hideIcons(excludingBundleIDs: toHide)
+                    let allowedSys = currentAllowedSystemItems
+                    let shouldHide = !toHide.isEmpty || (hideSystemIcons && !hiddenSystemItems.isEmpty)
+                    if shouldHide {
+                        assessmentManager.hideIcons(excludingBundleIDs: toHide, allowedSystemItems: allowedSys)
                     } else {
                         assessmentManager.showIcons()
                     }

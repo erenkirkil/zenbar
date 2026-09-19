@@ -14,8 +14,10 @@ final class MenuBarAssessmentManager {
     private var activeConfiguration: AnyObject?
 
     /// Sistem kontrolleri (Pil, Wi-Fi, Saat, Denetim Merkezi vb.)
-    /// macOS 27 MBSystemItemIdentifier enum aralığı: 0...8 (battery..primaryBentoBox)
-    static let defaultSystemItems: [Int] = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    /// macOS 27 MBSystemItemIdentifier canonical enum aralığı:
+    /// 0: battery, 1: bluetooth, 2: clock, 3: displays, 4: keyboard, 5: volume, 6: wifi, 7: screenMirroring, 8: primaryBentoBox
+    static let allSystemItems: [Int] = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    static let defaultAllowedSystemItems: [Int] = [2, 8] // Saat (2) ve Denetim Merkezi (8) daima görünür kalır
 
     private init() {
         zenbar_logMessage("[MenuBarAssessmentManager] init, isSupported: \(isSupported)")
@@ -30,20 +32,22 @@ final class MenuBarAssessmentManager {
         return zenbar_assessmentModeAvailable()
     }
 
-    /// Belirtilen Bundle ID'leri menü çubuğundan natif olarak gizler.
+    /// Belirtilen Bundle ID'leri ve sistem öğelerini menü çubuğundan natif olarak gizler.
     ///
-    /// - Parameter excludingBundleIDs: Gizlenmesi istenen uygulama paket kimlikleri.
+    /// - Parameters:
+    ///   - excludingBundleIDs: Gizlenmesi istenen uygulama paket kimlikleri.
+    ///   - allowedSystemItems: Görünür kalmasına izin verilen sistem kontrol kimlikleri (varsayılan: [2, 8] yani Saat ve Denetim Merkezi).
     /// - Returns: İşlem başarılı ise true.
     @discardableResult
-    func hideIcons(excludingBundleIDs: Set<String>) -> Bool {
+    func hideIcons(excludingBundleIDs: Set<String>, allowedSystemItems: [Int] = MenuBarAssessmentManager.defaultAllowedSystemItems) -> Bool {
         guard isSupported else {
             zenbar_logMessage("[MenuBarAssessmentManager] hideIcons called but assessment mode is NOT available")
             return false
         }
 
-        zenbar_logMessage("[MenuBarAssessmentManager] hideIcons called with excluding: \(Array(excludingBundleIDs))")
+        zenbar_logMessage("[MenuBarAssessmentManager] hideIcons called with excluding: \(Array(excludingBundleIDs)), allowedSystemItems: \(allowedSystemItems)")
 
-        if excludingBundleIDs.isEmpty {
+        if excludingBundleIDs.isEmpty && allowedSystemItems.count >= MenuBarAssessmentManager.allSystemItems.count {
             showIcons()
             return true
         }
@@ -75,7 +79,7 @@ final class MenuBarAssessmentManager {
             allowedBundles.insert(b)
         }
 
-        let systemItemsArray = MenuBarAssessmentManager.defaultSystemItems.map { NSNumber(value: $0) }
+        let systemItemsArray = allowedSystemItems.map { NSNumber(value: $0) }
         let bundleIDsArray = Array(allowedBundles)
 
         zenbar_logMessage("[MenuBarAssessmentManager] Creating config with \(systemItemsArray.count) system items and \(bundleIDsArray.count) allowed bundles")
