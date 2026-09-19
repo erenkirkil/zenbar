@@ -46,7 +46,31 @@ enum MBSystemItem: Int, CaseIterable {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItemToggle: NSStatusItem!
-    var statusItemSeparator: NSStatusItem!
+    var statusItemSeparator: NSStatusItem?
+
+    static let leafImage: NSImage? = {
+        let img = NSImage(systemSymbolName: "leaf", accessibilityDescription: "ZenBarToggle")
+        img?.isTemplate = true
+        return img
+    }()
+
+    static let leafFillImage: NSImage? = {
+        let img = NSImage(systemSymbolName: "leaf.fill", accessibilityDescription: "ZenBarToggle")
+        img?.isTemplate = true
+        return img
+    }()
+
+    static let separatorImage: NSImage? = {
+        let img = NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: "ZenBarSeparator")
+        img?.isTemplate = true
+        return img
+    }()
+
+    static let toggleEditImage: NSImage? = {
+        let img = NSImage(systemSymbolName: "circle.circle", accessibilityDescription: "ZenBarToggle")
+        img?.isTemplate = true
+        return img
+    }()
     
     var isExpanded: Bool = true 
     var isEditMode: Bool = false
@@ -128,7 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        zenbar_logMessage("[ZenBarApp] Launching. Introspection:\n\(zenbar_describeAssessmentClasses())")
+        zenbar_logMessage("[ZenBarApp] Launching v1.1.0")
 
         UserDefaults.standard.register(defaults: [
             hiddenBundlesKey: [
@@ -169,16 +193,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.setAccessibilityTitle("ZenBarToggle")
         }
 
-        statusItemSeparator = NSStatusBar.system.statusItem(withLength: 0)
-        statusItemSeparator.autosaveName = "ZenBarSeparator"
-        statusItemSeparator.isVisible = false
-        if let button = statusItemSeparator.button {
-            button.appearsDisabled = true
-            button.setAccessibilityLabel("ZenBarSeparator")
-            button.setAccessibilityTitle("ZenBarSeparator")
-        }
-
         updateIcons()
+        relieveMemoryPressure()
+    }
+
+    private func relieveMemoryPressure() {
+        malloc_zone_pressure_relief(malloc_default_zone(), 0)
     }
     
     // 10 Saniye sonra otomatik gizleyen sayaç (yalnızca kullanıcı menüyü açtığında devreye girer)
@@ -227,11 +247,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func detectThirdPartyApps() -> [NSRunningApplication] {
-        return NSWorkspace.shared.runningApplications.filter { app in
-            guard let bundleID = app.bundleIdentifier else { return false }
-            if bundleID.hasPrefix("com.apple.") { return false }
-            if bundleID == Bundle.main.bundleIdentifier || bundleID == "com.erenkirkil.ZenBar" { return false }
-            return app.activationPolicy == .accessory || app.activationPolicy == .regular || app.activationPolicy == .prohibited
+        autoreleasepool {
+            return NSWorkspace.shared.runningApplications.filter { app in
+                guard let bundleID = app.bundleIdentifier else { return false }
+                if bundleID.hasPrefix("com.apple.") { return false }
+                if bundleID == Bundle.main.bundleIdentifier || bundleID == "com.erenkirkil.ZenBar" { return false }
+                return app.activationPolicy == .accessory || app.activationPolicy == .regular || app.activationPolicy == .prohibited
+            }
         }
     }
 
@@ -286,116 +308,118 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func detectLeftHandBundleIDs() -> Set<String> {
-        guard AXIsProcessTrusted() else {
-            zenbar_logMessage("[ZenBarApp] Accessibility not trusted yet, returning existing hiddenBundleIDs")
-            return hiddenBundleIDs
-        }
-        guard let agent = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.apple.MenuBarAgent" }) else {
-            zenbar_logMessage("[ZenBarApp] MenuBarAgent not found")
-            return hiddenBundleIDs
-        }
-        let axApp = AXUIElementCreateApplication(agent.processIdentifier)
-        var windowsVal: AnyObject?
-        AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsVal)
-        guard let windows = windowsVal as? [AXUIElement], let win = windows.first else {
-            return hiddenBundleIDs
-        }
-        var childrenVal: AnyObject?
-        AXUIElementCopyAttributeValue(win, kAXChildrenAttribute as CFString, &childrenVal)
-        guard let groups = childrenVal as? [AXUIElement] else {
-            return hiddenBundleIDs
-        }
-
-        var detectedSepX: CGFloat?
-        if let sepWindow = statusItemSeparator.button?.window {
-            let frameX = sepWindow.frame.origin.x
-            if frameX > 0 {
-                detectedSepX = frameX
+        autoreleasepool {
+            guard AXIsProcessTrusted() else {
+                zenbar_logMessage("[ZenBarApp] Accessibility not trusted yet, returning existing hiddenBundleIDs")
+                return hiddenBundleIDs
             }
-        }
-
-        let myPID = ProcessInfo.processInfo.processIdentifier
-        var zenBarPositions: [CGFloat] = []
-        var otherApps: [(bundleID: String, x: CGFloat)] = []
-        var detectedSystemItems: [(item: MBSystemItem, x: CGFloat)] = []
-
-        for g in groups {
-            var posVal: AnyObject?
-            if AXUIElementCopyAttributeValue(g, kAXPositionAttribute as CFString, &posVal) != .success || posVal == nil {
-                continue
+            guard let agent = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.apple.MenuBarAgent" }) else {
+                zenbar_logMessage("[ZenBarApp] MenuBarAgent not found")
+                return hiddenBundleIDs
             }
-            guard let posVal = posVal else { continue }
-            var pt = CGPoint.zero
-            guard AXValueGetValue(posVal as! AXValue, .cgPoint, &pt) else { continue }
+            let axApp = AXUIElementCreateApplication(agent.processIdentifier)
+            var windowsVal: AnyObject?
+            AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsVal)
+            guard let windows = windowsVal as? [AXUIElement], let win = windows.first else {
+                return hiddenBundleIDs
+            }
+            var childrenVal: AnyObject?
+            AXUIElementCopyAttributeValue(win, kAXChildrenAttribute as CFString, &childrenVal)
+            guard let groups = childrenVal as? [AXUIElement] else {
+                return hiddenBundleIDs
+            }
 
-            let ownerPID = findOwnerPID(in: g, agentPID: agent.processIdentifier) ?? 0
-
-            if ownerPID == myPID {
-                zenBarPositions.append(pt.x)
-                var descVal: AnyObject?
-                AXUIElementCopyAttributeValue(g, kAXDescriptionAttribute as CFString, &descVal)
-                var titleVal: AnyObject?
-                AXUIElementCopyAttributeValue(g, kAXTitleAttribute as CFString, &titleVal)
-                let desc = (descVal as? String) ?? (titleVal as? String) ?? ""
-                if desc.contains("Separator") || desc.contains("Ayırıcı") {
-                    detectedSepX = pt.x
+            var detectedSepX: CGFloat?
+            if let sepWindow = statusItemSeparator?.button?.window {
+                let frameX = sepWindow.frame.origin.x
+                if frameX > 0 {
+                    detectedSepX = frameX
                 }
-            } else if ownerPID != 0,
-                      let app = NSRunningApplication(processIdentifier: ownerPID),
-                      let bundleID = app.bundleIdentifier,
-                      !bundleID.hasPrefix("com.apple.") {
-                otherApps.append((bundleID: bundleID, x: pt.x))
+            }
+
+            let myPID = ProcessInfo.processInfo.processIdentifier
+            var zenBarPositions: [CGFloat] = []
+            var otherApps: [(bundleID: String, x: CGFloat)] = []
+            var detectedSystemItems: [(item: MBSystemItem, x: CGFloat)] = []
+
+            for g in groups {
+                var posVal: AnyObject?
+                if AXUIElementCopyAttributeValue(g, kAXPositionAttribute as CFString, &posVal) != .success || posVal == nil {
+                    continue
+                }
+                guard let posVal = posVal else { continue }
+                var pt = CGPoint.zero
+                guard AXValueGetValue(posVal as! AXValue, .cgPoint, &pt) else { continue }
+
+                let ownerPID = findOwnerPID(in: g, agentPID: agent.processIdentifier) ?? 0
+
+                if ownerPID == myPID {
+                    zenBarPositions.append(pt.x)
+                    var descVal: AnyObject?
+                    AXUIElementCopyAttributeValue(g, kAXDescriptionAttribute as CFString, &descVal)
+                    var titleVal: AnyObject?
+                    AXUIElementCopyAttributeValue(g, kAXTitleAttribute as CFString, &titleVal)
+                    let desc = (descVal as? String) ?? (titleVal as? String) ?? ""
+                    if desc.contains("Separator") || desc.contains("Ayırıcı") {
+                        detectedSepX = pt.x
+                    }
+                } else if ownerPID != 0,
+                          let app = NSRunningApplication(processIdentifier: ownerPID),
+                          let bundleID = app.bundleIdentifier,
+                          !bundleID.hasPrefix("com.apple.") {
+                    otherApps.append((bundleID: bundleID, x: pt.x))
+                } else {
+                    var descVal: AnyObject?
+                    AXUIElementCopyAttributeValue(g, kAXDescriptionAttribute as CFString, &descVal)
+                    var titleVal: AnyObject?
+                    AXUIElementCopyAttributeValue(g, kAXTitleAttribute as CFString, &titleVal)
+                    let desc = (descVal as? String) ?? (titleVal as? String) ?? ""
+                    if let sysItem = systemItemFrom(description: desc) {
+                        detectedSystemItems.append((item: sysItem, x: pt.x))
+                    }
+                }
+            }
+
+            let toggleX: CGFloat = {
+                if let w = statusItemToggle.button?.window?.frame.origin.x, w > 0 { return w }
+                if !zenBarPositions.isEmpty { return zenBarPositions.max()! }
+                return 999999
+            }()
+
+            let minAppX = otherApps.map(\.x).min() ?? 0
+            let sepX: CGFloat
+            if let found = detectedSepX, found > minAppX, found < toggleX {
+                sepX = found
+                lastSeparatorX = found
             } else {
-                var descVal: AnyObject?
-                AXUIElementCopyAttributeValue(g, kAXDescriptionAttribute as CFString, &descVal)
-                var titleVal: AnyObject?
-                AXUIElementCopyAttributeValue(g, kAXTitleAttribute as CFString, &titleVal)
-                let desc = (descVal as? String) ?? (titleVal as? String) ?? ""
-                if let sysItem = systemItemFrom(description: desc) {
-                    detectedSystemItems.append((item: sysItem, x: pt.x))
+                sepX = toggleX
+                lastSeparatorX = toggleX
+            }
+
+            var leftBundles: Set<String> = []
+            for app in otherApps {
+                if app.x < sepX {
+                    leftBundles.insert(app.bundleID)
                 }
             }
-        }
 
-        let toggleX: CGFloat = {
-            if let w = statusItemToggle.button?.window?.frame.origin.x, w > 0 { return w }
-            if !zenBarPositions.isEmpty { return zenBarPositions.max()! }
-            return 999999
-        }()
-
-        let minAppX = otherApps.map(\.x).min() ?? 0
-        let sepX: CGFloat
-        if let found = detectedSepX, found > minAppX, found < toggleX {
-            sepX = found
-            lastSeparatorX = found
-        } else {
-            sepX = toggleX
-            lastSeparatorX = toggleX
-        }
-
-        var leftBundles: Set<String> = []
-        for app in otherApps {
-            if app.x < sepX {
-                leftBundles.insert(app.bundleID)
-            }
-        }
-
-        if !detectedSystemItems.isEmpty {
-            var newHiddenSys: Set<Int> = []
-            for sys in detectedSystemItems {
-                // Saat (clock) ve Denetim Merkezi (primaryBentoBox) varsayılan olarak korunur
-                if sys.x < sepX && sys.item != .clock && sys.item != .primaryBentoBox {
-                    newHiddenSys.insert(sys.item.rawValue)
+            if !detectedSystemItems.isEmpty {
+                var newHiddenSys: Set<Int> = []
+                for sys in detectedSystemItems {
+                    // Saat (clock) ve Denetim Merkezi (primaryBentoBox) varsayılan olarak korunur
+                    if sys.x < sepX && sys.item != .clock && sys.item != .primaryBentoBox {
+                        newHiddenSys.insert(sys.item.rawValue)
+                    }
                 }
+                if !newHiddenSys.isEmpty {
+                    hiddenSystemItems = newHiddenSys
+                }
+                zenbar_logMessage("[ZenBarApp] detectLeftHandBundleIDs detected \(detectedSystemItems.count) sys items, hidden: \(Array(newHiddenSys))")
             }
-            if !newHiddenSys.isEmpty {
-                hiddenSystemItems = newHiddenSys
-            }
-            zenbar_logMessage("[ZenBarApp] detectLeftHandBundleIDs detected \(detectedSystemItems.count) sys items, hidden: \(Array(newHiddenSys))")
-        }
 
-        zenbar_logMessage("[ZenBarApp] detectLeftHandBundleIDs found \(leftBundles.count) left-hand bundles (sepX=\(sepX), toggleX=\(toggleX)): \(Array(leftBundles))")
-        return leftBundles.isEmpty ? hiddenBundleIDs : leftBundles
+            zenbar_logMessage("[ZenBarApp] detectLeftHandBundleIDs found \(leftBundles.count) left-hand bundles (sepX=\(sepX), toggleX=\(toggleX)): \(Array(leftBundles))")
+            return leftBundles.isEmpty ? hiddenBundleIDs : leftBundles
+        }
     }
 
     @objc func toggleAppHiding(_ sender: NSMenuItem) {
@@ -534,21 +558,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         zenbar_logMessage("[ZenBarApp] updateIcons: isEditMode=\(isEditMode), isExpanded=\(isExpanded)")
         if isEditMode {
             assessmentManager.showIcons()
-            statusItemSeparator.isVisible = true
-            statusItemSeparator.length = 20
-            if let sepImg = NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: "ZenBarSeparator") {
-                sepImg.isTemplate = true
-                statusItemSeparator.button?.image = sepImg
+            if statusItemSeparator == nil {
+                let sep = NSStatusBar.system.statusItem(withLength: 20)
+                sep.autosaveName = "ZenBarSeparator"
+                sep.behavior = .removalAllowed
+                sep.button?.setAccessibilityLabel("ZenBarSeparator")
+                sep.button?.setAccessibilityTitle("ZenBarSeparator")
+                statusItemSeparator = sep
             }
-            if let toggleImg = NSImage(systemSymbolName: "circle.circle", accessibilityDescription: "ZenBarToggle") {
-                toggleImg.isTemplate = true
-                statusItemToggle.button?.image = toggleImg
-            }
+            statusItemSeparator?.isVisible = true
+            statusItemSeparator?.length = 20
+            statusItemSeparator?.button?.image = AppDelegate.separatorImage
+            statusItemToggle.button?.image = AppDelegate.toggleEditImage
         } else {
-            // Normal kullanımda (açık veya kapalı) ayırıcı kesinlikle gizli kalır — ekranda bar rengi/çizgi oluşmasını engeller
-            statusItemSeparator.isVisible = false
-            statusItemSeparator.length = 0
-            statusItemSeparator.button?.image = nil
+            // Normal kullanımda (açık veya kapalı) ayırıcı tamamen kaldırılır — WindowServer pencere belleğini ve çizgi kalıntılarını sıfırlar
+            if let sep = statusItemSeparator {
+                NSStatusBar.system.removeStatusItem(sep)
+                statusItemSeparator = nil
+            }
 
             statusItemToggle.isVisible = true
             statusItemToggle.length = 28
@@ -556,10 +583,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             if isExpanded {
                 assessmentManager.showIcons()
-                if let leafImg = NSImage(systemSymbolName: "leaf", accessibilityDescription: "ZenBarToggle") {
-                    leafImg.isTemplate = true
-                    statusItemToggle.button?.image = leafImg
-                }
+                statusItemToggle.button?.image = AppDelegate.leafImage
                 // Genişletildiğinde menü çubuğundaki tüm uygulamaların konumlarını tara
                 let detected = detectLeftHandBundleIDs()
                 if !detected.isEmpty {
@@ -573,10 +597,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     hiddenBundleIDs = toHide
                 }
                 zenbar_logMessage("[ZenBarApp] updateIcons toHide: \(Array(toHide))")
-                if let leafFillImg = NSImage(systemSymbolName: "leaf.fill", accessibilityDescription: "ZenBarToggle") {
-                    leafFillImg.isTemplate = true
-                    statusItemToggle.button?.image = leafFillImg
-                }
+                statusItemToggle.button?.image = AppDelegate.leafFillImage
                 if assessmentManager.isSupported {
                     let allowedSys = currentAllowedSystemItems
                     let shouldHide = !toHide.isEmpty || (hideSystemIcons && !hiddenSystemItems.isEmpty)
@@ -587,6 +608,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
             }
+            relieveMemoryPressure()
         }
     }
 

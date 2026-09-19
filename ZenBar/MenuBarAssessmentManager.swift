@@ -54,9 +54,11 @@ final class MenuBarAssessmentManager {
 
         // Sistemdeki tüm çalışan uygulamaları al (yalnızca geçerli paket kimliği olanlar)
         var allowedBundles = Set<String>()
-        for app in NSWorkspace.shared.runningApplications {
-            if let bid = app.bundleIdentifier, bid.contains(".") {
-                allowedBundles.insert(bid)
+        autoreleasepool {
+            for app in NSWorkspace.shared.runningApplications {
+                if let bid = app.bundleIdentifier, bid.contains(".") {
+                    allowedBundles.insert(bid)
+                }
             }
         }
 

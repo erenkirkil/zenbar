@@ -23,18 +23,6 @@ static void zenbar_internalLog(NSString *msg) {
         fflush(fTmp);
         fclose(fTmp);
     }
-
-    // 3. Write to user logs: ~/Library/Logs/ZenBar.log
-    NSString *home = NSHomeDirectory();
-    if (home) {
-        NSString *logPath = [home stringByAppendingPathComponent:@"Library/Logs/ZenBar.log"];
-        FILE *fUser = fopen([logPath UTF8String], "a");
-        if (fUser) {
-            fputs([line UTF8String], fUser);
-            fflush(fUser);
-            fclose(fUser);
-        }
-    }
 }
 
 void zenbar_logMessage(NSString *message) {
