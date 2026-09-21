@@ -2,6 +2,7 @@
 #import <dlfcn.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import <os/log.h>
 
 static Class _configClass;
 static Class _assertionClass;
@@ -9,20 +10,36 @@ static BOOL _loaded;
 static id _retainedAssertion;
 static id _retainedConfig;
 
-static void zenbar_internalLog(NSString *msg) {
-    NSLog(@"[ZenBar] %@", msg);
-    NSString *line = [NSString stringWithFormat:@"%@ [ZenBar] %@\n", [NSDate date], msg];
-    
-    // 1. Write to stderr
-    fputs([line UTF8String], stderr);
+// Birleşik günlük (unified logging). Eskiden her satır ayrıca /tmp/zenbar.log'a
+// ekleniyordu: sınırsız büyüyordu (216 KB'a ulaşmıştı), rotasyonu yoktu ve çalışan
+// üçüncü parti uygulamaların tam bundle listesini paylaşılan bir dizine yazıyordu.
+// Artık os_log kullanılıyor; okumak için:
+//   /usr/bin/log show --last 5m --predicate 'subsystem == "com.erenkirkil.ZenBar"' --info
+static os_log_t zenbar_logHandle(void) {
+    static os_log_t handle;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        handle = os_log_create("com.erenkirkil.ZenBar", "assessment");
+    });
+    return handle;
+}
 
-    // 2. Write to /tmp/zenbar.log
-    FILE *fTmp = fopen("/tmp/zenbar.log", "a");
-    if (fTmp) {
-        fputs([line UTF8String], fTmp);
-        fflush(fTmp);
-        fclose(fTmp);
-    }
+static void zenbar_internalLog(NSString *msg) {
+    // Ayrıntılı iz yalnızca hata ayıklama derlemelerinde; Release'te teşhis için
+    // yalnızca hata yolları os_log_error ile kalıcı olarak kaydedilir.
+    //
+    // Gizlilik: bu mesajlar kullanıcının çalışan üçüncü parti uygulamalarının bundle
+    // listesini taşıyabiliyor. Geliştirici kendi makinesinde okuyabilsin diye DEBUG'da
+    // açık, son kullanıcının sistem günlüğüne düşmesin diye Release'te %{private}.
+#if DEBUG
+    os_log_info(zenbar_logHandle(), "%{public}@", msg);
+#else
+    os_log_debug(zenbar_logHandle(), "%{private}@", msg);
+#endif
+}
+
+static void zenbar_internalLogError(NSString *msg) {
+    os_log_error(zenbar_logHandle(), "%{public}@", msg);
 }
 
 void zenbar_logMessage(NSString *message) {
@@ -37,6 +54,16 @@ static void zenbar_log(NSString *format, ...) {
     zenbar_internalLog(msg);
 }
 
+/// Gerçek hata yolları. Release derlemesinde de kaydedilir — özel framework
+/// kaybolduğunda ya da assertion reddedildiğinde teşhisin tek kaynağı budur.
+static void zenbar_logError(NSString *format, ...) {
+    va_list args;
+    va_start(args, format);
+    NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    zenbar_internalLogError(msg);
+}
+
 static void zenbar_load(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -44,7 +71,7 @@ static void zenbar_load(void) {
             "/System/Library/PrivateFrameworks/MenuBarClientCore.framework/MenuBarClientCore",
             RTLD_LAZY);
         if (handle == NULL) {
-            zenbar_log(@"dlopen failed: %s", dlerror());
+            zenbar_logError(@"dlopen failed: %s", dlerror());
             return;
         }
         _configClass = NSClassFromString(@"MBAssessmentModeConfiguration");
@@ -60,6 +87,9 @@ BOOL zenbar_assessmentModeAvailable(void) {
     return _loaded;
 }
 
+#if DEBUG
+// Yalnızca hata ayıklama aracı: Apple özel framework'ün sınıf yüzeyini değiştirdiğinde
+// yeni selector'ları keşfetmek için. Release binary'sine girmez.
 static void zenbar_appendMethods(NSMutableString *out, Class cls, BOOL classMethods) {
     unsigned int count = 0;
     Class target = classMethods ? object_getClass(cls) : cls;
@@ -97,18 +127,23 @@ NSString *zenbar_describeAssessmentClasses(void) {
     }
     return out;
 }
+#else
+NSString *zenbar_describeAssessmentClasses(void) {
+    return @"(yalnızca DEBUG derlemesinde kullanılabilir)";
+}
+#endif
 
 id zenbar_makeConfiguration(NSArray<NSNumber *> *allowedSystemItems,
                             NSArray<NSString *> *allowedBundleIDs) {
     zenbar_load();
     if (!_loaded) {
-        zenbar_log(@"makeConfiguration: framework not loaded");
+        zenbar_logError(@"makeConfiguration: framework not loaded");
         return nil;
     }
     @try {
         SEL initSel = NSSelectorFromString(@"initWithAllowedSystemItems:allowedBundleIdentifiers:");
         if (![_configClass instancesRespondToSelector:initSel]) {
-            zenbar_log(@"makeConfiguration: configClass does not respond to %@", NSStringFromSelector(initSel));
+            zenbar_logError(@"makeConfiguration: configClass does not respond to %@", NSStringFromSelector(initSel));
             return nil;
         }
 
@@ -129,7 +164,7 @@ id zenbar_makeConfiguration(NSArray<NSNumber *> *allowedSystemItems,
         zenbar_log(@"makeConfiguration created config: %@", config);
         return config;
     } @catch (NSException *e) {
-        zenbar_log(@"makeConfiguration EXCEPTION: %@", e);
+        zenbar_logError(@"makeConfiguration EXCEPTION: %@", e);
         return nil;
     }
 }
@@ -138,7 +173,7 @@ id zenbar_activateAssertion(id configuration, void (^completion)(NSError *_Nulla
     zenbar_load();
     zenbar_log(@"zenbar_activateAssertion called, config=%@", configuration);
     if (!_loaded || configuration == nil) {
-        zenbar_log(@"zenbar_activateAssertion: aborting (loaded=%d, config=%@)", _loaded, configuration);
+        zenbar_logError(@"zenbar_activateAssertion: aborting (loaded=%d, config=%@)", _loaded, configuration);
         return nil;
     }
     @try {
@@ -157,7 +192,7 @@ id zenbar_activateAssertion(id configuration, void (^completion)(NSError *_Nulla
             void (^copiedCompletion)(NSError *) = [completion copy];
             void (^wrappedCompletion)(NSError *) = ^(NSError *error) {
                 if (error != nil) {
-                    zenbar_log(@"*** MBAssessmentModeAssertion completion ERROR: domain=%@, code=%ld, description=%@, userInfo=%@",
+                    zenbar_logError(@"MBAssessmentModeAssertion completion ERROR: domain=%@, code=%ld, description=%@, userInfo=%@",
                                error.domain, (long)error.code, error.localizedDescription, error.userInfo);
                 } else {
                     zenbar_log(@"*** MBAssessmentModeAssertion completion SUCCESS: error is nil! Active in MenuBarAgent. ***");
@@ -175,10 +210,10 @@ id zenbar_activateAssertion(id configuration, void (^completion)(NSError *_Nulla
             zenbar_log(@"activateMsg completed. Returning assertion %@", assertion);
             return assertion;
         }
-        zenbar_log(@"zenbar_activateAssertion: no known activation selector on %@", _assertionClass);
+        zenbar_logError(@"zenbar_activateAssertion: no known activation selector on %@", _assertionClass);
         return nil;
     } @catch (NSException *e) {
-        zenbar_log(@"zenbar_activateAssertion EXCEPTION: %@", e);
+        zenbar_logError(@"zenbar_activateAssertion EXCEPTION: %@", e);
         return nil;
     }
 }
@@ -195,7 +230,7 @@ void zenbar_invalidateAssertion(id assertion) {
             zenbar_log(@"zenbar_invalidateAssertion: invalidate executed successfully on %@", target);
         }
     } @catch (NSException *e) {
-        zenbar_log(@"zenbar_invalidateAssertion EXCEPTION: %@", e);
+        zenbar_logError(@"zenbar_invalidateAssertion EXCEPTION: %@", e);
     }
     if (target == _retainedAssertion) {
         _retainedAssertion = nil;

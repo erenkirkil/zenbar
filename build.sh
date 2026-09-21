@@ -19,7 +19,10 @@ xcodebuild -scheme $APP_NAME -configuration Release clean build SYMROOT="$PROJEC
 APP_PATH="$BUILD_DIR/$APP_NAME.app"
 
 echo "🔐 Uygulama (.app) imzalanıyor..."
-codesign --deep --force --options runtime --sign "$IDENTITY" "$APP_PATH"
+# --deep kullanılmaz (Apple önermiyor); pakette gömülü framework/helper yok.
+codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP_PATH"
+# İmzalama sessizce başarısız olabiliyor; doğrulanmadan dağıtıma geçilmez.
+codesign --verify --strict "$APP_PATH" || { echo "İMZA DOĞRULAMASI BAŞARISIZ — dağıtım durduruldu"; exit 1; }
 
 echo "📦 DMG dosyası oluşturuluyor..."
 mkdir -p "$PROJECT_DIR/build/dmg_staging"
@@ -38,7 +41,11 @@ xcrun stapler staple "$DMG_NAME"
 
 echo "✅ Tebrikler! $DMG_NAME dosyası başarıyla imzalandı, onaylandı ve dağıtıma hazır hale getirildi."
 
-TAG="v1.1.0"
+# Tag, derlenen paketin kendi sürümünden türetilir. Elle yazıldığında MARKETING_VERSION
+# ile kaçınılmaz olarak ayrışıyor ve k-deck kurulu sürümü tag ile karşılaştırdığı için
+# kullanıcıda "sürekli güncelleme var" durumu oluşuyor.
+APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist")"
+TAG="v$APP_VERSION"
 
 if [[ "$1" != "--no-upload" ]]; then
     echo "🚀 GitHub Release oluşturuluyor ve $DMG_NAME yükleniyor ($TAG)..."
@@ -51,7 +58,7 @@ if [[ "$1" != "--no-upload" ]]; then
 
 - **Natif Sistem İkonu Gizleme:** Pil, Wi-Fi, Bluetooth, Ses, Ekran, Ekran Yansıtma gibi sistem kontrolleri macOS 27 assessment modu üzerinden natif olarak gizlenebiliyor.
 - **Kanonik MBSystemItem Eşleştirmesi:** macOS 27 \`MenuBarClientCore\` enum değerleri tersine mühendislikle kanonik olarak eşleştirildi (Saat ve Denetim Merkezi korunurken, Ekran Yansıtma ve diğer kontroller başarıyla gizleniyor).
-- **Sistem İkonları Yönetim Menüsü:** Sağ tık menüsüne eklenen \"Sistem İkonları\" alt menüsü üzerinden tüm sistem kontrolleri ve Saat dilediğiniz gibi tek tek veya topluca yönetilebilir.
+- **Sistem İkonları Yönetim Menüsü:** Sağ tık menüsüne eklenen \"Sistem İkonları\" alt menüsü üzerinden tüm sistem kontrolleri, Saat ve Denetim Merkezi dilediğiniz gibi tek tek veya topluca yönetilebilir.
 - **Sclip ve Üçüncü Taraf Uygulamalar:** \`sclip\` ve diğer arka plan menü çubuğu ajanlarının otomatik gizlenmesi kararlı hale getirildi.
 - **RAM ve Performans Optimizasyonu:** Bellek ayak izi 18.5 MB'tan 11.5 MB'a düşürüldü (%38 bellek tasarrufu), dinamik NSStatusItem ve autoreleasepool bellek temizliği entegre edildi."
     fi

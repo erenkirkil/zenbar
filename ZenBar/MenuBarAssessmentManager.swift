@@ -23,9 +23,8 @@ final class MenuBarAssessmentManager {
         zenbar_logMessage("[MenuBarAssessmentManager] init, isSupported: \(isSupported)")
     }
 
-    isolated deinit {
-        showIcons()
-    }
+    // Not: burada bir deinit yoktur — bu tip bir singleton'dır ve süreç ömrü boyunca
+    // yaşar, deinit asla çalışmaz. Geri alma işi applicationWillTerminate'te yapılır.
 
     /// Sistemde yerel gizleme desteğinin bulunup bulunmadığı
     var isSupported: Bool {
@@ -46,6 +45,7 @@ final class MenuBarAssessmentManager {
         }
 
         zenbar_logMessage("[MenuBarAssessmentManager] hideIcons called with excluding: \(Array(excludingBundleIDs)), allowedSystemItems: \(allowedSystemItems)")
+
 
         if excludingBundleIDs.isEmpty && allowedSystemItems.count >= MenuBarAssessmentManager.allSystemItems.count {
             showIcons()
@@ -118,7 +118,16 @@ final class MenuBarAssessmentManager {
         return true
     }
 
-    /// Gizlenen simgeleri anında eski haline getirir.
+    /// Gizlenen simgeleri eski haline getirir — **tek adımda**.
+    ///
+    /// Burada bir ara "her şeye izin veren" assertion'a çapraz geçiş DENENDİ ve geri
+    /// alındı. Ölçüm (MenuBarAgent'ın `trailingItems.count` olayları) şunu gösterdi:
+    ///   • doğrudan invalidate  → 7 → 8 → 15, 62 ms içinde, tek dalga
+    ///   • çapraz geçiş         → 7 → 10 → 12 … 450 ms duraklama … 13 → 15, iki dalga
+    /// Ara assertion menü çubuğu öğelerinin yalnızca 12'sini geri getirebiliyordu; kalan
+    /// 3'ü hiçbir paket kimliğiyle ifade edilemediği için ancak assessment mode tamamen
+    /// kapanınca dönüyordu. Sonuç: geri dönüş ikiye bölünüyor ve gözle görülür hale
+    /// geliyordu. Tek adım hem daha hızlı hem de kesintisiz.
     func showIcons() {
         zenbar_logMessage("[MenuBarAssessmentManager] showIcons called, activeAssertion is \(activeAssertion != nil ? "NON-NIL" : "NIL")")
         guard let assertion = activeAssertion else {
@@ -128,5 +137,11 @@ final class MenuBarAssessmentManager {
         zenbar_invalidateAssertion(assertion)
         self.activeAssertion = nil
         self.activeConfiguration = nil
+    }
+
+    /// Uygulama kapanırken beklemeden, koşulsuz olarak eski hale döndürür.
+    /// Ertelenmiş sökümün çalışmasını bekleyemeyiz — süreç ölüyor.
+    func restoreImmediately() {
+        showIcons()
     }
 }

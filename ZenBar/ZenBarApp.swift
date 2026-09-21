@@ -31,9 +31,9 @@ enum MBSystemItem: Int, CaseIterable {
         return allCases.map(\.rawValue)
     }
 
-    /// Menüde kullanıcının gizlemeyi seçebileceği kontroller (Saat dahil!)
+    /// Menüde kullanıcının gizlemeyi seçebileceği kontroller (Saat ve Denetim Merkezi dahil!)
     static var hideableCases: [MBSystemItem] {
-        return [.battery, .bluetooth, .displays, .screenMirroring, .volume, .wifi, .keyboard, .clock]
+        return [.battery, .bluetooth, .displays, .screenMirroring, .volume, .wifi, .keyboard, .clock, .primaryBentoBox]
     }
 
     /// Varsayılan olarak gizlenecek kontroller (Saat (2) ve Denetim Merkezi (8) hariç)
@@ -79,23 +79,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastToggleTimestamp: TimeInterval = 0
 
     let assessmentManager = MenuBarAssessmentManager.shared
+    let hotkey = ToggleHotkey()
 
     private let hiddenBundlesKey = "ZenBarHiddenBundleIDs"
     private var cachedHiddenBundleIDs: Set<String> = []
 
+    /// Önbelleğin yüklenip yüklenmediğini ayrı tutarız: "boş küme" artık geçerli bir
+    /// durumdur (varsayılan boş liste). Eskiden boşluk "önbellek dolu değil" sayıldığı
+    /// için her erişimde UserDefaults'a gidiliyordu.
+    private var hiddenBundlesLoaded = false
+
     var hiddenBundleIDs: Set<String> {
         get {
-            if !cachedHiddenBundleIDs.isEmpty {
-                return cachedHiddenBundleIDs
+            if !hiddenBundlesLoaded {
+                cachedHiddenBundleIDs = Set(UserDefaults.standard.stringArray(forKey: hiddenBundlesKey) ?? [])
+                hiddenBundlesLoaded = true
             }
-            if let saved = UserDefaults.standard.stringArray(forKey: hiddenBundlesKey), !saved.isEmpty {
-                cachedHiddenBundleIDs = Set(saved)
-                return cachedHiddenBundleIDs
-            }
-            return []
+            return cachedHiddenBundleIDs
         }
         set {
             cachedHiddenBundleIDs = newValue
+            hiddenBundlesLoaded = true
             UserDefaults.standard.set(Array(newValue), forKey: hiddenBundlesKey)
         }
     }
@@ -152,24 +156,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        zenbar_logMessage("[ZenBarApp] Launching v1.1.0")
+        // Sürüm bundle'dan okunur; koda sabitlenirse her yayında elle güncellemek gerekir
+        // ve kaçınılmaz olarak kayar.
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        zenbar_logMessage("[ZenBarApp] Launching v\(version)")
 
+        // Varsayılan gizli uygulama listesi BOŞ gelir. Daha önce burada geliştiricinin
+        // kendi uygulamaları (tiler, closetoquit, docktoggle, sclip, antigravity) sabit
+        // olarak yazılıydı ve sclip her açılışta kullanıcı ayarına zorla geri ekleniyordu
+        // — yani kullanıcının menüden kaldırdığı seçim her başlangıçta geri geliyordu.
+        // Hangi uygulamanın gizleneceği yalnızca kullanıcının kararıdır.
         UserDefaults.standard.register(defaults: [
-            hiddenBundlesKey: [
-                "com.erenkirkil.tiler",
-                "com.erenkirkil.closetoquit",
-                "com.google.antigravity",
-                "com.erenkirkil.docktoggle",
-                "com.erenkirkil.sclip"
-            ],
+            hiddenBundlesKey: [String](),
             hideSystemIconsKey: true,
             hiddenSystemItemsKey: MBSystemItem.defaultHiddenCases.map(\.rawValue)
         ])
-        var currentSet = Set(UserDefaults.standard.stringArray(forKey: hiddenBundlesKey) ?? [])
-        currentSet.insert("com.erenkirkil.sclip")
-        cachedHiddenBundleIDs = currentSet
-        UserDefaults.standard.set(Array(currentSet), forKey: hiddenBundlesKey)
-        UserDefaults.standard.synchronize()
+        cachedHiddenBundleIDs = Set(UserDefaults.standard.stringArray(forKey: hiddenBundlesKey) ?? [])
+        hiddenBundlesLoaded = true
 
         let checkOpt = ["AXTrustedCheckOptionPrompt" as CFString: true] as CFDictionary
         let isTrusted = AXIsProcessTrustedWithOptions(checkOpt)
@@ -193,12 +196,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.setAccessibilityTitle("ZenBarToggle")
         }
 
+        // Klavye kısayolu: Ctrl+Opt+Shift+Z her zaman kayıtlıdır (Carbon, tap yok).
+        // fn+Z yalnızca kullanıcı menüden açtıysa kurulur.
+        hotkey.onTrigger = { [weak self] in
+            self?.performToggle()
+        }
+        hotkey.installCarbonHotkey()
+        hotkey.startFnTapIfEnabled()
+
         updateIcons()
         relieveMemoryPressure()
     }
 
+    @objc func toggleFnHotkey() {
+        if !hotkey.isFnHotkeyEnabled && !hotkey.canEnableFnHotkey {
+            // Tap Erişilebilirlik izni olmadan kurulamaz; kullanıcıyı panele yönlendir.
+            let alert = NSAlert()
+            alert.messageText = "fn+Z için Erişilebilirlik izni gerekiyor"
+            alert.informativeText = """
+                fn tuşlu kısayollar yalnızca bir olay dinleyicisiyle yakalanabilir ve bu \
+                dinleyici Erişilebilirlik izni ister. İzni verdikten sonra bu seçeneği \
+                tekrar işaretleyebilirsin.
+
+                Ctrl+Opt+Shift+Z kısayolu izin olmadan da çalışır.
+                """
+            alert.addButton(withTitle: "Ayarları Aç")
+            alert.addButton(withTitle: "Vazgeç")
+            if alert.runModal() == .alertFirstButtonReturn {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            return
+        }
+        hotkey.isFnHotkeyEnabled.toggle()
+    }
+
+    private var memoryReliefWorkItem: DispatchWorkItem?
+
+    /// `malloc_zone_pressure_relief` malloc bölgesini gezip boş sayfaları çekirdeğe
+    /// geri verir — ucuz değildir. Geçişin ortasında ana thread'de çağrılırsa ikonlar
+    /// yeniden dizilirken araya girer. Bu yüzden geçiş oturduktan sonraya ertelenir ve
+    /// arka arkaya tıklamalarda tek çağrıya indirgenir (coalesce).
     private func relieveMemoryPressure() {
-        malloc_zone_pressure_relief(malloc_default_zone(), 0)
+        memoryReliefWorkItem?.cancel()
+        let item = DispatchWorkItem {
+            malloc_zone_pressure_relief(malloc_default_zone(), 0)
+        }
+        memoryReliefWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: item)
     }
     
     // 10 Saniye sonra otomatik gizleyen sayaç (yalnızca kullanıcı menüyü açtığında devreye girer)
@@ -412,9 +458,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
                 if !newHiddenSys.isEmpty {
-                    hiddenSystemItems = newHiddenSys
+                    // Kullanıcının sağ tık menüsünden özel olarak seçtiği Saat veya Denetim Merkezi tercihlerini koru
+                    let explicitUserSelections = hiddenSystemItems.intersection([MBSystemItem.clock.rawValue, MBSystemItem.primaryBentoBox.rawValue])
+                    hiddenSystemItems = newHiddenSys.union(explicitUserSelections)
                 }
-                zenbar_logMessage("[ZenBarApp] detectLeftHandBundleIDs detected \(detectedSystemItems.count) sys items, hidden: \(Array(newHiddenSys))")
+                zenbar_logMessage("[ZenBarApp] detectLeftHandBundleIDs detected \(detectedSystemItems.count) sys items, hidden: \(Array(hiddenSystemItems))")
             }
 
             zenbar_logMessage("[ZenBarApp] detectLeftHandBundleIDs found \(leftBundles.count) left-hand bundles (sepX=\(sepX), toggleX=\(toggleX)): \(Array(leftBundles))")
@@ -460,7 +508,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func toggleIcons() {
         if let event = NSApp.currentEvent, event.type == .rightMouseUp {
             let menu = NSMenu()
-            
+
+            // Gizleme, macOS'un özel MenuBarClientCore framework'üne dayanır. Apple bunu
+            // bir ara sürümde yeniden adlandırır/kaldırırsa uygulama sessizce işlevsiz
+            // kalırdı; bu durumu kullanıcıya açıkça söyle.
+            if !assessmentManager.isSupported {
+                let warning = NSMenuItem(
+                    title: "⚠️ Gizleme bu macOS sürümünde çalışmıyor",
+                    action: nil, keyEquivalent: "")
+                warning.isEnabled = false
+                menu.addItem(warning)
+                let detail = NSMenuItem(
+                    title: "Sistem menü çubuğu arayüzü değişmiş olabilir.",
+                    action: nil, keyEquivalent: "")
+                detail.isEnabled = false
+                menu.addItem(detail)
+                menu.addItem(NSMenuItem.separator())
+            }
+
             let editTitle = isEditMode ? "Düzenlemeyi Bitir" : "İkonların Yerini Düzenle"
             menu.addItem(NSMenuItem(title: editTitle, action: #selector(toggleEditMode), keyEquivalent: "e"))
             
@@ -512,6 +577,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             menu.addItem(NSMenuItem.separator())
 
+            // Klavye kısayolu bölümü
+            let shortcutInfo = NSMenuItem(title: "Kısayol: ⌃⌥⇧Z", action: nil, keyEquivalent: "")
+            shortcutInfo.isEnabled = false
+            menu.addItem(shortcutInfo)
+
+            let fnItem = NSMenuItem(title: "fn+Z ile de aç/kapa",
+                                    action: #selector(toggleFnHotkey), keyEquivalent: "")
+            fnItem.target = self
+            fnItem.state = hotkey.isFnHotkeyEnabled ? .on : .off
+            // fn'li kısayol Carbon ile bağlanamaz; yalnızca bir klavye olay dinleyicisiyle
+            // yakalanabilir. Bu yüzden isteğe bağlıdır ve kapalıyken hiç kurulmaz.
+            fnItem.toolTip = "fn'li kısayollar bir klavye olay dinleyicisi gerektirir "
+                + "(Erişilebilirlik izni). Kapalıyken dinleyici hiç kurulmaz."
+            menu.addItem(fnItem)
+
+            menu.addItem(NSMenuItem.separator())
+
             // Başlangıçta açılma durumunu kontrol et ve menüye yaz
             let isAutoLaunch = SMAppService.mainApp.status == .enabled
             let launchTitle = isAutoLaunch ? "✓ Başlangıçta Otomatik Açıl" : "Başlangıçta Otomatik Açıl"
@@ -526,10 +608,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Tıklama debouncing: 350ms içindeki mükerrer tetiklemeleri yoksay
+        performToggle()
+    }
+
+    /// Asıl aç/kapa. Menü çubuğu düğmesi ve klavye kısayolu aynı yolu kullanır —
+    /// debounce dahil, böylece hızlı tekrarlar iki kaynakta da aynı şekilde elenir.
+    func performToggle() {
+        // Debouncing: 350ms içindeki mükerrer tetiklemeleri yoksay
         let now = ProcessInfo.processInfo.systemUptime
         if now - lastToggleTimestamp < 0.35 {
-            zenbar_logMessage("[ZenBarApp] toggleIcons: debounced rapid click (delta: \(now - lastToggleTimestamp)s)")
+            zenbar_logMessage("[ZenBarApp] performToggle: debounced rapid trigger (delta: \(now - lastToggleTimestamp)s)")
             return
         }
         lastToggleTimestamp = now
@@ -582,20 +670,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusItemToggle.behavior = .removalAllowed
 
             if isExpanded {
+                // Burada AX taraması YAPILMAZ. showIcons() MenuBarAgent'a tüm öğeleri
+                // yeniden dizdirir; o sırada aynı sürece senkron AX sorgusu göndermek
+                // ana thread'i kilitler ve ikonlar belirirken görünür kasmaya yol açar.
+                // (Daraltmada tarama görsel değişimden önce bittiği için fark edilmiyordu.)
                 assessmentManager.showIcons()
                 statusItemToggle.button?.image = AppDelegate.leafImage
-                // Genişletildiğinde menü çubuğundaki tüm uygulamaların konumlarını tara
-                let detected = detectLeftHandBundleIDs()
-                if !detected.isEmpty {
-                    hiddenBundleIDs = hiddenBundleIDs.union(detected)
-                }
             } else {
-                var toHide = hiddenBundleIDs
-                let detected = detectLeftHandBundleIDs()
-                if !detected.isEmpty {
-                    toHide = toHide.union(detected)
-                    hiddenBundleIDs = toHide
-                }
+                // Gizlenecek küme yalnızca kullanıcının kararlarından gelir: düzenleme
+                // modundan çıkışta yapılan konum tespiti + menüdeki onay kutuları.
+                // Eskiden burada da tarama yapılıp sonuç union'lanıyordu; bu, kullanıcı
+                // menüden bir uygulamanın işaretini kaldırdığında onu bir sonraki
+                // tıklamada geri ekliyordu ve liste yalnızca büyüyordu.
+                let toHide = hiddenBundleIDs
                 zenbar_logMessage("[ZenBarApp] updateIcons toHide: \(Array(toHide))")
                 statusItemToggle.button?.image = AppDelegate.leafFillImage
                 if assessmentManager.isSupported {
@@ -613,6 +700,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        assessmentManager.showIcons()
+        // showIcons() artık sökümü ~0,45 sn erteliyor (yumuşak geçiş için). Süreç ölürken
+        // o zamanlayıcı çalışamaz, bu yüzden koşulsuz ve anında geri alma kullanılır.
+        memoryReliefWorkItem?.cancel()
+        hotkey.shutdown()
+        assessmentManager.restoreImmediately()
     }
 }
