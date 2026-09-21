@@ -54,13 +54,14 @@ if [[ "$1" != "--no-upload" ]]; then
     else
         gh release create "$TAG" "$DMG_NAME" \
             --title "ZenBar $TAG" \
-            --notes "### ✨ macOS 27 Sistem İkonları Desteği & İyileştirmeler
+            --notes "### ✨ ZenBar $TAG Yenilikleri & İyileştirmeler
 
-- **Natif Sistem İkonu Gizleme:** Pil, Wi-Fi, Bluetooth, Ses, Ekran, Ekran Yansıtma gibi sistem kontrolleri macOS 27 assessment modu üzerinden natif olarak gizlenebiliyor.
-- **Kanonik MBSystemItem Eşleştirmesi:** macOS 27 \`MenuBarClientCore\` enum değerleri tersine mühendislikle kanonik olarak eşleştirildi (Saat ve Denetim Merkezi korunurken, Ekran Yansıtma ve diğer kontroller başarıyla gizleniyor).
-- **Sistem İkonları Yönetim Menüsü:** Sağ tık menüsüne eklenen \"Sistem İkonları\" alt menüsü üzerinden tüm sistem kontrolleri, Saat ve Denetim Merkezi dilediğiniz gibi tek tek veya topluca yönetilebilir.
-- **Sclip ve Üçüncü Taraf Uygulamalar:** \`sclip\` ve diğer arka plan menü çubuğu ajanlarının otomatik gizlenmesi kararlı hale getirildi.
-- **RAM ve Performans Optimizasyonu:** Bellek ayak izi 18.5 MB'tan 11.5 MB'a düşürüldü (%38 bellek tasarrufu), dinamik NSStatusItem ve autoreleasepool bellek temizliği entegre edildi."
+- **Denetim Merkezi (Control Center) Desteği:** Sağ tık menüsüne eklenen Denetim Merkezi seçeneğiyle macOS 27'de Denetim Merkezi de sistem seviyesinde gizlenebilir veya görünür tutulabilir.
+- **Klavye Kısayolları (Hotkey):** Menü çubuğunu doğrudan klavyeden açıp kapatmak için \`⌃⌥⇧Z\` (Ctrl+Opt+Shift+Z) global kısayolu eklendi. İsteğe bağlı olarak menüden \`fn+Z\` kısayolu da açılabilir.
+- **Akıllı Tercih Koruması:** Sağ tık menüsünden seçilen uygulamalar ve sistem ikonları artık ayırıcı hareketlerinde veya yeniden başlatmada asla ezilmez.
+- **Performans ve Animasyon Akıcılığı:** Menü çubuğu geri yükleme animasyonlarında takılmaları önlemek için bellek rahatlatma zamanlaması optimize edildi.
+- **Unified Logging (os_log):** Sistem günlüğü \`os_log\` standardına taşındı; diskte gereksiz dosya büyümesi engellendi.
+- **Natif Sistem İkonu Gizleme:** Pil, Wi-Fi, Bluetooth, Ses, Ekran, Ekran Yansıtma, Saat kontrolleri sorunsuz yönetilebilir."
     fi
     echo "🎉 GitHub Release ($TAG) başarıyla yayınlandı!"
 fi
